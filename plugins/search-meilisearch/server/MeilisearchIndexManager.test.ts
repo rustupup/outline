@@ -93,6 +93,34 @@ describe("MeilisearchIndexManager", () => {
         },
       ]);
     });
+
+    it("ensures the stable index exists before swapping (first install)", async () => {
+      const client = fakeClient();
+      const manager = new MeilisearchIndexManager(client);
+
+      await manager.swapDocumentIndex("20260718T120000Z");
+
+      // createIndex must be called for the stable index before swapIndexes
+      expect(client.createIndex).toHaveBeenCalledWith("outline_documents", {
+        primaryKey: "id",
+      });
+    });
+
+    it("rejects when the swap task fails", async () => {
+      const client = fakeClient();
+      // Override waitForTask to return a failed task (this was the root cause
+      // of the silent swap failure bug).
+      vi.mocked(client.waitForTask).mockResolvedValue({
+        status: "failed",
+        error: { message: "index_already_exists", code: "..." },
+      } as never);
+
+      const manager = new MeilisearchIndexManager(client);
+
+      await expect(
+        manager.swapDocumentIndex("20260718T120000Z")
+      ).rejects.toThrow(/failed/);
+    });
   });
 
   describe("deleteIndex", () => {
