@@ -4,6 +4,8 @@ import BaseProcessor from "@server/queues/processors/BaseProcessor";
 import type {
   DocumentEvent,
   DocumentMovedEvent,
+  DocumentUserEvent,
+  DocumentGroupEvent,
   CollectionEvent,
   CommentEvent,
   CommentUpdateEvent,
@@ -26,6 +28,10 @@ export default class SearchIndexProcessor extends BaseProcessor {
     "documents.delete",
     "documents.permanent_delete",
     "documents.move",
+    "documents.add_user",
+    "documents.remove_user",
+    "documents.add_group",
+    "documents.remove_group",
     "collections.create",
     "collections.update",
     "collections.delete",
@@ -35,7 +41,13 @@ export default class SearchIndexProcessor extends BaseProcessor {
   ];
 
   async perform(
-    event: DocumentEvent | DocumentMovedEvent | CollectionEvent | CommentEvent
+    event:
+      | DocumentEvent
+      | DocumentMovedEvent
+      | DocumentUserEvent
+      | DocumentGroupEvent
+      | CollectionEvent
+      | CommentEvent
   ): Promise<void> {
     const provider = SearchProviderManager.getProvider();
 
@@ -89,6 +101,21 @@ export default class SearchIndexProcessor extends BaseProcessor {
             collectionId: movedEvent.collectionId,
           });
         }
+        break;
+      }
+
+      case "documents.add_user":
+      case "documents.remove_user":
+      case "documents.add_group":
+      case "documents.remove_group": {
+        // The provider reloads current ACL state; the event payload is not
+        // authoritative. This converges duplicate and out-of-order events.
+        const membershipEvent = event as DocumentUserEvent | DocumentGroupEvent;
+        await provider.updateMetadata(
+          SearchableModel.Document,
+          membershipEvent.documentId,
+          {}
+        );
         break;
       }
 

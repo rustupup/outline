@@ -13,3 +13,14 @@ services:
       POSTGRES_PASSWORD: pass
       POSTGRES_DB: outline
     user: "postgres:postgres"
+  meilisearch:
+    image: getmeili/meilisearch:v1.49.0
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meilisearch-data:/meili_data
+    restart: unless-stopped
+volumes:
+  meilisearch-data:
