@@ -1,0 +1,135 @@
+# Alpine-based multi-stage Dockerfile for Outline.
+#
+# Builds a minimal linux/amd64 image containing only the Outline application.
+# PostgreSQL, Redis, and Meilisearch are expected to run as separate containers
+# (see docker-compose.yml) or be provided externally.
+#
+# Build:
+#   docker build -f Dockerfile.alpine -t outline:alpine --platform linux/amd64 .
+#
+# For air-gapped deployment:
+#   docker save outline:alpine -o outline-alpine.tar
+#   # transfer to intranet machine, then:
+#   docker load -i outline-alpine.tar
+
+ARG APP_PATH=/opt/outline
+ARG NODE_IMAGE=node:22-alpine
+
+# ----------------------------------------------------------------------------
+# Stage 1: deps — install ALL dependencies (including dev) for building
+# ----------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS deps
+ARG APP_PATH
+
+# Native module build toolchain. Required by @datadog/native-*, aws-crt,
+# unix-dgram, msgpackr-extract when no prebuilt Alpine binary exists.
+RUN apk add --no-cache python3 build-base cmake
+RUN corepack enable
+
+WORKDIR $APP_PATH
+
+# Copy dependency manifests first for better layer caching
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY patches ./patches
+
+ENV NODE_OPTIONS="--max-old-space-size=8192"
+
+RUN yarn install --immutable --network-timeout 1000000
+
+# ----------------------------------------------------------------------------
+# Stage 2: prod-deps — install ONLY production dependencies from scratch
+# ----------------------------------------------------------------------------
+# Why a separate stage: running `yarn workspaces focus --production` inside
+# the builder (after a full install) leaves devDependency artifacts in the
+# yarn cache and .pnp.cjs. Installing production deps from a clean slate
+# yields a smaller, cleaner node_modules for the runtime image.
+FROM ${NODE_IMAGE} AS prod-deps
+ARG APP_PATH
+
+RUN apk add --no-cache python3 build-base cmake
+RUN corepack enable
+
+WORKDIR $APP_PATH
+
+COPY package.json yarn.lock .yarnrc.yml ./
+COPY patches ./patches
+
+RUN yarn workspaces focus --production && yarn cache clean
+
+# ----------------------------------------------------------------------------
+# Stage 3: builder — compile TypeScript to JavaScript
+# ----------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS builder
+ARG APP_PATH
+
+RUN apk add --no-cache python3 build-base cmake
+RUN corepack enable
+
+WORKDIR $APP_PATH
+
+# Copy installed node_modules (with devDeps) from deps stage for building
+COPY --from=deps $APP_PATH/node_modules ./node_modules
+
+# Copy the rest of the source
+COPY . .
+
+ARG CDN_URL
+ENV NODE_ENV=production
+
+# Build the server, shared, and frontend bundles. build:i18n copies
+# shared/i18n/locales into build/shared/i18n, so the runtime does NOT
+# need a separate shared/i18n copy.
+RUN yarn build:server && yarn vite:build && yarn build:i18n
+
+# ----------------------------------------------------------------------------
+# Stage 4: runner — minimal runtime image
+# ----------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS runner
+ARG APP_PATH
+
+LABEL org.opencontainers.image.title="Outline (Alpine)"
+LABEL org.opencontainers.image.description="Outline knowledge base with Meilisearch search provider, Alpine-based."
+LABEL org.opencontainers.image.source="https://github.com/outline/outline"
+
+WORKDIR $APP_PATH
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Runtime dependencies: wget for healthcheck, tini for proper signal handling.
+# ca-certificates is pulled in transitively by wget on Alpine.
+RUN apk add --no-cache wget tini
+
+# Create a non-root user (Alpine uses busybox adduser/addgroup)
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -u 1001 -S nodejs -G nodejs && \
+    mkdir -p /var/lib/outline && \
+    chown -R nodejs:nodejs /var/lib/outline && \
+    chown -R nodejs:nodejs $APP_PATH
+
+# Copy build artifacts from builder, and clean production node_modules from
+# prod-deps (no devDeps, no yarn cache, no .pnp.cjs residue).
+COPY --from=builder --chown=nodejs:nodejs $APP_PATH/build ./build
+COPY --from=builder --chown=nodejs:nodejs $APP_PATH/server ./server
+COPY --from=builder --chown=nodejs:nodejs $APP_PATH/public ./public
+COPY --from=builder --chown=nodejs:nodejs $APP_PATH/.sequelizerc ./.sequelizerc
+COPY --from=prod-deps --chown=nodejs:nodejs $APP_PATH/node_modules ./node_modules
+COPY --from=prod-deps --chown=nodejs:nodejs $APP_PATH/package.json ./package.json
+
+# Local file storage directory
+ENV FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
+RUN mkdir -p "$FILE_STORAGE_LOCAL_ROOT_DIR" && \
+    chown -R nodejs:nodejs "$FILE_STORAGE_LOCAL_ROOT_DIR" && \
+    chmod 1777 "$FILE_STORAGE_LOCAL_ROOT_DIR"
+
+VOLUME /var/lib/outline/data
+
+USER nodejs
+
+HEALTHCHECK --interval=1m --timeout=10s --start-period=30s \
+  CMD wget -qO- "http://localhost:${PORT:-3000}/_health" | grep -q "OK" || exit 1
+
+EXPOSE 3000
+
+# tini handles SIGTERM properly for Node.js under PID 1
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "build/server/index.js"]
