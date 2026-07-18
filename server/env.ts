@@ -870,6 +870,39 @@ export class Environment {
     this.toOptionalString(environment.SEARCH_PROVIDER) ?? "postgres";
 
   /**
+   * The Meilisearch server host URL. Only required when SEARCH_PROVIDER is
+   * set to "meilisearch"; validated at client construction time.
+   */
+  @IsOptional()
+  @IsUrl({ protocols: ["http", "https"], require_tld: false })
+  public MEILISEARCH_HOST = this.toOptionalString(environment.MEILISEARCH_HOST);
+
+  /**
+   * The Meilisearch API key. Only required when SEARCH_PROVIDER is set to
+   * "meilisearch"; validated at client construction time. Never logged.
+   */
+  @IsOptional()
+  public MEILISEARCH_API_KEY = this.toOptionalString(
+    environment.MEILISEARCH_API_KEY
+  );
+
+  /**
+   * Prefix applied to all Meilisearch index names. Useful when multiple
+   * Outline instances share a single Meilisearch server.
+   */
+  @IsOptional()
+  public MEILISEARCH_INDEX_PREFIX =
+    this.toOptionalString(environment.MEILISEARCH_INDEX_PREFIX) ?? "outline";
+
+  /**
+   * Timeout in milliseconds for Meilisearch SDK requests.
+   */
+  @IsOptional()
+  @IsNumber()
+  public MEILISEARCH_TIMEOUT_MS =
+    this.toOptionalNumber(environment.MEILISEARCH_TIMEOUT_MS) ?? 5000;
+
+  /**
    * The product name
    */
   @Public

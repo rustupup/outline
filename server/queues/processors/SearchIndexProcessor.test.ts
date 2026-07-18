@@ -23,6 +23,18 @@ describe("SearchIndexProcessor", () => {
       "documents.permanent_delete"
     );
     expect(SearchIndexProcessor.applicableEvents).toContain(
+      "documents.add_user"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
+      "documents.remove_user"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
+      "documents.add_group"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
+      "documents.remove_group"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
       "collections.create"
     );
     expect(SearchIndexProcessor.applicableEvents).toContain("comments.create");
@@ -50,7 +62,7 @@ describe("SearchIndexProcessor", () => {
       collectionId: collection.id,
       teamId: user.teamId,
       actorId: user.id,
-    } as PerformArg);
+    } as unknown as PerformArg);
 
     expect(indexSpy).toHaveBeenCalledWith(
       SearchableModel.Document,
@@ -71,7 +83,7 @@ describe("SearchIndexProcessor", () => {
       collectionId: "some-collection-id",
       teamId: user.teamId,
       actorId: user.id,
-    } as PerformArg);
+    } as unknown as PerformArg);
 
     expect(removeSpy).toHaveBeenCalledWith(
       SearchableModel.Document,
@@ -80,5 +92,129 @@ describe("SearchIndexProcessor", () => {
     );
 
     removeSpy.mockRestore();
+  });
+
+  it("should call provider.updateMetadata for documents.add_user", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+    const document = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      userId: user.id,
+    });
+
+    const provider = SearchProviderManager.getProvider();
+    const updateSpy = vi.spyOn(provider, "updateMetadata");
+
+    await processor.perform({
+      name: "documents.add_user",
+      documentId: document.id,
+      collectionId: collection.id,
+      teamId: user.teamId,
+      actorId: user.id,
+    } as unknown as PerformArg);
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      SearchableModel.Document,
+      document.id,
+      {}
+    );
+    updateSpy.mockRestore();
+  });
+
+  it("should call provider.updateMetadata for documents.remove_user", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+    const document = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      userId: user.id,
+    });
+
+    const provider = SearchProviderManager.getProvider();
+    const updateSpy = vi.spyOn(provider, "updateMetadata");
+
+    await processor.perform({
+      name: "documents.remove_user",
+      documentId: document.id,
+      collectionId: collection.id,
+      teamId: user.teamId,
+      actorId: user.id,
+    } as unknown as PerformArg);
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      SearchableModel.Document,
+      document.id,
+      {}
+    );
+    updateSpy.mockRestore();
+  });
+
+  it("should call provider.updateMetadata for documents.add_group", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+    const document = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      userId: user.id,
+    });
+
+    const provider = SearchProviderManager.getProvider();
+    const updateSpy = vi.spyOn(provider, "updateMetadata");
+
+    await processor.perform({
+      name: "documents.add_group",
+      documentId: document.id,
+      collectionId: collection.id,
+      teamId: user.teamId,
+      actorId: user.id,
+    } as unknown as PerformArg);
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      SearchableModel.Document,
+      document.id,
+      {}
+    );
+    updateSpy.mockRestore();
+  });
+
+  it("should call provider.updateMetadata for documents.remove_group", async () => {
+    const user = await buildUser();
+    const collection = await buildCollection({
+      teamId: user.teamId,
+      userId: user.id,
+    });
+    const document = await buildDocument({
+      teamId: user.teamId,
+      collectionId: collection.id,
+      userId: user.id,
+    });
+
+    const provider = SearchProviderManager.getProvider();
+    const updateSpy = vi.spyOn(provider, "updateMetadata");
+
+    await processor.perform({
+      name: "documents.remove_group",
+      documentId: document.id,
+      collectionId: collection.id,
+      teamId: user.teamId,
+      actorId: user.id,
+    } as unknown as PerformArg);
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      SearchableModel.Document,
+      document.id,
+      {}
+    );
+    updateSpy.mockRestore();
   });
 });

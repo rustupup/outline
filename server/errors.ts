@@ -268,3 +268,12 @@ export function ClientClosedRequestError(
     isReportable: false,
   });
 }
+
+export function SearchServiceUnavailableError(
+  message = "Search service unavailable"
+) {
+  return httpErrors(503, message, {
+    id: "search_service_unavailable",
+    isReportable: true,
+  });
+}
