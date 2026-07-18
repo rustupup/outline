@@ -97,6 +97,12 @@ export function createMeilisearchClient(
   // Adapt the SDK's task client to the narrow MeilisearchClient interface.
   // The SDK exposes waitForTask on the tasks sub-client; we surface it at the
   // top level so the provider can await async indexing tasks uniformly.
+  //
+  // The SDK's waitForTask resolves as soon as the task leaves the
+  // enqueued/processing state, regardless of whether it succeeded or failed.
+  // We wrap it to reject on failed tasks so callers don't silently swallow
+  // failures (this was the root cause of the swap-indexes bug where a failed
+  // swap was reported as "Swap complete").
   return {
     index: (uid: string) => instance.index(uid),
     createIndex: (uid: string, options?: { primaryKey?: string }) =>
@@ -107,7 +113,13 @@ export function createMeilisearchClient(
         params.map((p) => ({ indexes: p.indexes, rename: p.rename ?? false }))
       ),
     health: () => instance.health(),
-    waitForTask: (taskUid: number, options?: WaitOptions) =>
-      instance.tasks.waitForTask(taskUid, options),
+    waitForTask: async (taskUid: number, options?: WaitOptions) => {
+      const task = await instance.tasks.waitForTask(taskUid, options);
+      if (task.status === "failed") {
+        const detail = "error" in task ? JSON.stringify(task.error) : "unknown";
+        throw new Error(`Meilisearch task ${taskUid} failed: ${detail}`);
+      }
+      return task;
+    },
   } as unknown as MeilisearchClient;
 }

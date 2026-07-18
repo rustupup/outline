@@ -48,6 +48,29 @@ export class MeilisearchIndexManager {
   public constructor(private readonly client: MeilisearchClient) {}
 
   /**
+   * Wait for a Meilisearch task and reject if it failed.
+   *
+   * The SDK's waitForTask resolves as soon as a task leaves the
+   * enqueued/processing state, regardless of whether it succeeded or failed.
+   * This wrapper checks the final status and rejects on failure, so a failed
+   * swap/settings/documents task surfaces as an error instead of being
+   * silently treated as success.
+   *
+   * @param taskUid - the enqueued task uid to await.
+   * @param options - wait options (timeout).
+   */
+  private async waitForTaskSuccess(
+    taskUid: number,
+    options?: { timeout?: number }
+  ): Promise<void> {
+    const task = await this.client.waitForTask(taskUid, options);
+    if (task.status === "failed") {
+      const detail = "error" in task ? JSON.stringify(task.error) : "unknown";
+      throw new Error(`Meilisearch task ${taskUid} failed: ${detail}`);
+    }
+  }
+
+  /**
    * Create a versioned document index with primary key `id` and apply the
    * document settings, waiting for both tasks to complete.
    *
@@ -56,11 +79,11 @@ export class MeilisearchIndexManager {
   public async createVersionedDocumentIndex(timestamp: string): Promise<void> {
     const uid = versionedDocumentIndexName(timestamp);
     const create = await this.client.createIndex(uid, { primaryKey: "id" });
-    await this.client.waitForTask(create.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(create.taskUid, { timeout: 30000 });
 
     const index = this.client.index<MeilisearchDocumentRecord>(uid);
     const settings = await index.updateSettings(documentIndexSettings as never);
-    await this.client.waitForTask(settings.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(settings.taskUid, { timeout: 30000 });
   }
 
   /**
@@ -74,13 +97,13 @@ export class MeilisearchIndexManager {
   ): Promise<void> {
     const uid = versionedCollectionIndexName(timestamp);
     const create = await this.client.createIndex(uid, { primaryKey: "id" });
-    await this.client.waitForTask(create.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(create.taskUid, { timeout: 30000 });
 
     const index = this.client.index<MeilisearchCollectionRecord>(uid);
     const settings = await index.updateSettings(
       collectionIndexSettings as never
     );
-    await this.client.waitForTask(settings.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(settings.taskUid, { timeout: 30000 });
   }
 
   /**
@@ -101,7 +124,7 @@ export class MeilisearchIndexManager {
       versionedDocumentIndexName(timestamp)
     );
     const enqueued = await index.addDocuments(records);
-    await this.client.waitForTask(enqueued.taskUid, { timeout: 60000 });
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 60000 });
   }
 
   /**
@@ -121,7 +144,7 @@ export class MeilisearchIndexManager {
       versionedCollectionIndexName(timestamp)
     );
     const enqueued = await index.addDocuments(records);
-    await this.client.waitForTask(enqueued.taskUid, { timeout: 60000 });
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 60000 });
   }
 
   /**
@@ -147,6 +170,28 @@ export class MeilisearchIndexManager {
   }
 
   /**
+   * Ensure the stable index exists before swapping. Meilisearch v1.49's
+   * swapIndexes rejects if either index uid is missing, so on first
+   * installation we must create an empty stable index first. If the stable
+   * index already exists, the createIndex call fails and we swallow the
+   * error (checked via task status, not the enqueue response).
+   *
+   * @param uid - the stable index uid to ensure exists.
+   */
+  private async ensureStableIndexExists(uid: string): Promise<void> {
+    try {
+      const enqueued = await this.client.createIndex(uid, {
+        primaryKey: "id",
+      });
+      await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 30000 });
+    } catch {
+      // Index already exists (createIndex returns a failed task with
+      // "index_already_exists" error). Safe to ignore — we only need it
+      // to exist before swap.
+    }
+  }
+
+  /**
    * Atomically swap the versioned document index into the stable name. The
    * previous stable index is retained as the old versioned name for manual
    * cleanup; it is never deleted automatically.
@@ -154,6 +199,7 @@ export class MeilisearchIndexManager {
    * @param timestamp - build identifier.
    */
   public async swapDocumentIndex(timestamp: string): Promise<void> {
+    await this.ensureStableIndexExists(stableDocumentIndexName());
     const enqueued = await this.client.swapIndexes([
       {
         indexes: [
@@ -163,7 +209,7 @@ export class MeilisearchIndexManager {
         rename: false,
       },
     ]);
-    await this.client.waitForTask(enqueued.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 30000 });
   }
 
   /**
@@ -172,6 +218,7 @@ export class MeilisearchIndexManager {
    * @param timestamp - build identifier.
    */
   public async swapCollectionIndex(timestamp: string): Promise<void> {
+    await this.ensureStableIndexExists(stableCollectionIndexName());
     const enqueued = await this.client.swapIndexes([
       {
         indexes: [
@@ -181,7 +228,7 @@ export class MeilisearchIndexManager {
         rename: false,
       },
     ]);
-    await this.client.waitForTask(enqueued.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 30000 });
   }
 
   /**
@@ -192,7 +239,7 @@ export class MeilisearchIndexManager {
    */
   public async deleteIndex(uid: string): Promise<void> {
     const enqueued = await this.client.deleteIndex(uid);
-    await this.client.waitForTask(enqueued.taskUid, { timeout: 30000 });
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 30000 });
   }
 
   /**
@@ -213,6 +260,10 @@ export class MeilisearchIndexManager {
     for (let i = 0; i < argv.length; i++) {
       const arg = argv[i];
       switch (arg) {
+        // POSIX-style option terminator: node and npm pass it before
+        // user args. Silently skip so callers can use `node script.js -- --flag`.
+        case "--":
+          break;
         case "--team-id":
           opts.teamId = argv[++i];
           break;
