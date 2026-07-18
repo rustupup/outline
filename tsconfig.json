@@ -37,7 +37,10 @@
       // Vite 8 and its plugins ship types only via their exports map, which
       // resolvePackageJsonExports disables; point tsc at their declaration entries.
       "vite": ["./node_modules/vite/dist/node/index.d.ts"],
-      "@vitejs/plugin-react": ["./node_modules/@vitejs/plugin-react/dist/index.d.ts"]
+      "@vitejs/plugin-react": ["./node_modules/@vitejs/plugin-react/dist/index.d.ts"],
+      // meilisearch SDK ships types under dist/ without a `types` package.json
+      // field; point tsc at the declaration entry so imports resolve.
+      "meilisearch": ["./node_modules/meilisearch/dist/index.d.ts"]
     }
   },
   "exclude": ["node_modules", "build", "server/migrations"]
