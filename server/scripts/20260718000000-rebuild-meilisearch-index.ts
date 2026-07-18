@@ -10,7 +10,12 @@ import {
   MeilisearchIndexManager,
   type RebuildOptions,
 } from "plugins/search-meilisearch/server/MeilisearchIndexManager";
-import { stableCollectionIndexName } from "plugins/search-meilisearch/server/settings";
+import {
+  stableCollectionIndexName,
+  stableDocumentIndexName,
+  versionedCollectionIndexName,
+  versionedDocumentIndexName,
+} from "plugins/search-meilisearch/server/settings";
 
 /**
  * Rebuild Meilisearch indexes from PostgreSQL into versioned indexes, verify
@@ -51,13 +56,15 @@ export default async function main(exit = true): Promise<void> {
 
   // Step 5-7: Scan documents in id-ascending batches using id > lastId.
   const backfillStartedAt = new Date();
-  let lastDocumentId = opts.resumeFrom ?? "0";
+  let lastDocumentId: string | null = opts.resumeFrom ?? null;
   let documentCount = 0;
 
   while (true) {
     const documents = await Document.unscoped().findAll({
       where: {
-        id: { [Op.gt]: lastDocumentId },
+        // Skip the id > lastId condition on the first batch so we don't
+        // compare a UUID column against a placeholder string.
+        ...(lastDocumentId ? { id: { [Op.gt]: lastDocumentId } } : {}),
         deletedAt: { [Op.is]: null },
         ...(opts.teamId ? { teamId: opts.teamId } : {}),
       },
@@ -82,13 +89,13 @@ export default async function main(exit = true): Promise<void> {
   }
 
   // Step 8: Scan collections.
-  let lastCollectionId = "0";
+  let lastCollectionId: string | null = null;
   let collectionCount = 0;
 
   while (true) {
-    const collections = await Collection.unscoped().findAll({
+    const collections: Collection[] = await Collection.unscoped().findAll({
       where: {
-        id: { [Op.gt]: lastCollectionId },
+        ...(lastCollectionId ? { id: { [Op.gt]: lastCollectionId } } : {}),
         deletedAt: { [Op.is]: null },
         ...(opts.teamId ? { teamId: opts.teamId } : {}),
       },
@@ -147,7 +154,14 @@ export default async function main(exit = true): Promise<void> {
     await manager.swapDocumentIndex(timestamp);
     await manager.swapCollectionIndex(timestamp);
     console.log("Swap complete. Old indexes retained for manual cleanup.");
-    console.log(`Old document index: ${stableCollectionIndexName()}`);
+    console.log(`Stable document index: ${stableDocumentIndexName()}`);
+    console.log(`Stable collection index: ${stableCollectionIndexName()}`);
+    console.log(
+      `Versioned document index (old): ${versionedDocumentIndexName(timestamp)}`
+    );
+    console.log(
+      `Versioned collection index (old): ${versionedCollectionIndexName(timestamp)}`
+    );
   } else {
     console.log("--no-swap: indexes built and verified but not activated.");
   }
