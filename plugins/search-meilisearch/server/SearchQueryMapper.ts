@@ -72,6 +72,8 @@ export class SearchQueryMapper {
       limit: options.limit ?? DEFAULT_LIMIT,
       filter,
       showRankingScore: true,
+      showMatchesPosition: true,
+      matchingStrategy: "all",
       attributesToCrop: ["text"],
       cropLength: options.snippetMaxWords ?? DEFAULT_CROP_LENGTH,
       attributesToHighlight: ["text"],

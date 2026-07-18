@@ -18,6 +18,8 @@ interface HydratableHit {
   id: string;
   _formatted?: { text?: string };
   _rankingScore?: number;
+  /** Match positions per field; empty object means no actual match. */
+  _matchesPosition?: Record<string, unknown>;
 }
 
 /**
@@ -64,6 +66,30 @@ function rankingOf(hit: HydratableHit): number {
     return score;
   }
   return 0;
+}
+
+/**
+ * Determine whether a hit has at least one actual match position. Meilisearch
+ * may return documents with an empty `_matchesPosition` object when the
+ * `words` ranking rule fills results from loosely related documents. These
+ * hits have no real substring match and should be omitted.
+ *
+ * @param hit - the Meilisearch hit.
+ * @returns true when the hit has at least one matched field.
+ */
+function hasActualMatch(hit: HydratableHit): boolean {
+  const matches = hit._matchesPosition;
+  if (!matches) {
+    // Server didn't return matchesPosition; assume match (backward compat).
+    return true;
+  }
+  for (const key of Object.keys(matches)) {
+    const positions = matches[key];
+    if (Array.isArray(positions) && positions.length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -161,6 +187,12 @@ export class ResultHydrator {
 
     return {
       results: map(hits, (hit) => {
+        // Skip hits with no actual match position. Meilisearch may return
+        // loosely related documents when the `words` ranking rule fills
+        // results; _matchesPosition reveals they have no real match.
+        if (!hasActualMatch(hit)) {
+          return null;
+        }
         const document = documents.find((d) => d.id === hit.id);
         if (!document) {
           return null;
