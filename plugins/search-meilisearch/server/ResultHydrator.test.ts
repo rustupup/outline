@@ -12,6 +12,7 @@ interface FakeHit {
   id: string;
   _formatted: { text: string };
   _rankingScore: number;
+  _matchesPosition?: Record<string, unknown>;
 }
 
 function fakeSearchResponse(
@@ -268,6 +269,52 @@ describe("ResultHydrator", () => {
       expect(context).not.toContain("<img");
       // The onerror payload appears as escaped text, not as an attribute.
       expect(context).not.toMatch(/<img[^>]*onerror/);
+    });
+
+    it("omits hits with empty _matchesPosition (no actual match)", async () => {
+      const team = await buildTeam();
+      const user = await buildUser({ teamId: team.id });
+      const collection = await buildCollection({
+        teamId: team.id,
+        userId: user.id,
+      });
+      const matched = await buildDocument({
+        teamId: team.id,
+        userId: user.id,
+        collectionId: collection.id,
+        title: "Real match",
+      });
+      const unmatched = await buildDocument({
+        teamId: team.id,
+        userId: user.id,
+        collectionId: collection.id,
+        title: "No match here",
+      });
+
+      const hits: FakeHit[] = [
+        {
+          id: matched.id,
+          _formatted: { text: "Real <b>match</b>" },
+          _rankingScore: 0.9,
+          _matchesPosition: { text: [{ start: 0, length: 4 }] },
+        },
+        {
+          id: unmatched.id,
+          _formatted: { text: "No match here" },
+          _rankingScore: 0.8,
+          _matchesPosition: {},
+        },
+      ];
+
+      const hydrator = new ResultHydrator();
+      const result = await hydrator.hydrateForUser(
+        user,
+        fakeSearchResponse(hits)
+      );
+
+      // unmatched should be omitted because it has no actual match.
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].document.id).toBe(matched.id);
     });
 
     it("reports total from estimatedTotalHits", async () => {
