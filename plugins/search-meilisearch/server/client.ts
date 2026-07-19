@@ -25,6 +25,8 @@ export interface SearchIndexClient<T> {
   updateDocuments(documents: Partial<T>[]): Promise<EnqueuedTask>;
   /** Delete a single document by id. */
   deleteDocument(id: string): Promise<EnqueuedTask>;
+  /** Delete multiple documents by id. */
+  deleteDocuments(ids: string[]): Promise<EnqueuedTask>;
   /** Search the index. */
   search(
     query: string,

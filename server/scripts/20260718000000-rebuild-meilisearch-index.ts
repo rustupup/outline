@@ -22,7 +22,7 @@ import {
  * counts, and atomically swap into the stable names.
  *
  * Usage:
- *   node ./build/server/scripts/20260718000000-rebuild-meilisearch-index.js [--team-id <uuid>] [--batch-size <n>] [--dry-run] [--no-swap] [--resume-from <uuid>] [--allow-provider-mismatch]
+ *   node ./build/server/scripts/20260718000000-rebuild-meilisearch-index.js [--team-id <uuid> --no-swap] [--batch-size <n>] [--dry-run] [--no-swap] [--allow-provider-mismatch]
  */
 export default async function main(exit = true): Promise<void> {
   const opts = MeilisearchIndexManager.parseRebuildArgs(process.argv.slice(2));
@@ -46,6 +46,7 @@ export default async function main(exit = true): Promise<void> {
     .replace(/[-:]/g, "")
     .replace(/\..+/, "Z");
 
+  const backfillStartedAt = new Date();
   console.log(`Rebuild started, versioned timestamp: ${timestamp}`);
 
   // Step 4: Create versioned indexes and settings.
@@ -55,12 +56,11 @@ export default async function main(exit = true): Promise<void> {
   }
 
   // Step 5-7: Scan documents in id-ascending batches using id > lastId.
-  const backfillStartedAt = new Date();
-  let lastDocumentId: string | null = opts.resumeFrom ?? null;
+  let lastDocumentId: string | null = null;
   let documentCount = 0;
 
   while (true) {
-    const documents = await Document.unscoped().findAll({
+    const documents: Document[] = await Document.unscoped().findAll({
       where: {
         // Skip the id > lastId condition on the first batch so we don't
         // compare a UUID column against a placeholder string.
@@ -78,7 +78,7 @@ export default async function main(exit = true): Promise<void> {
 
     if (!opts.dryRun) {
       const records = await Promise.all(
-        documents.map((d) => documentMapper.toRecord(d))
+        documents.map((document: Document) => documentMapper.toRecord(document))
       );
       await manager.batchUpsertDocuments(timestamp, records);
     }
@@ -134,20 +134,58 @@ export default async function main(exit = true): Promise<void> {
   const catchUpDocs = await Document.unscoped().findAll({
     where: {
       updatedAt: { [Op.gte]: backfillStartedAt },
-      deletedAt: { [Op.is]: null },
       ...(opts.teamId ? { teamId: opts.teamId } : {}),
     },
   });
-  if (catchUpDocs.length > 0) {
+  const liveCatchUpDocs = catchUpDocs.filter((document) => !document.deletedAt);
+  if (liveCatchUpDocs.length > 0) {
     const records = await Promise.all(
-      catchUpDocs.map((d) => documentMapper.toRecord(d))
+      liveCatchUpDocs.map((document) => documentMapper.toRecord(document))
     );
     await manager.batchUpsertDocuments(timestamp, records);
-    documentCount += catchUpDocs.length;
   }
+  await manager.batchDeleteDocuments(
+    timestamp,
+    catchUpDocs
+      .filter((document) => Boolean(document.deletedAt))
+      .map((document) => document.id)
+  );
+
+  const catchUpCollections = await Collection.unscoped().findAll({
+    where: {
+      updatedAt: { [Op.gte]: backfillStartedAt },
+      ...(opts.teamId ? { teamId: opts.teamId } : {}),
+    },
+  });
+  const liveCatchUpCollections = catchUpCollections.filter(
+    (collection) => !collection.deletedAt
+  );
+  if (liveCatchUpCollections.length > 0) {
+    const records = await Promise.all(
+      liveCatchUpCollections.map((collection) =>
+        collectionMapper.toRecord(collection)
+      )
+    );
+    await manager.batchUpsertCollections(timestamp, records);
+  }
+  await manager.batchDeleteCollections(
+    timestamp,
+    catchUpCollections
+      .filter((collection) => Boolean(collection.deletedAt))
+      .map((collection) => collection.id)
+  );
 
   // Step 10-11: Verify counts.
-  await manager.verifyDocumentCount(timestamp, documentCount);
+  const countWhere = {
+    deletedAt: { [Op.is]: null },
+    ...(opts.teamId ? { teamId: opts.teamId } : {}),
+  };
+  const [expectedDocumentCount, expectedCollectionCount] = await Promise.all([
+    Document.unscoped().count({ where: countWhere }),
+    Collection.unscoped().count({ where: countWhere }),
+  ]);
+  await manager.verifyDocumentCount(timestamp, expectedDocumentCount);
+  await manager.verifyCollectionCount(timestamp, expectedCollectionCount);
 
   // Step 12-14: Swap (unless --no-swap).
   if (!opts.noSwap) {

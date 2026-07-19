@@ -55,4 +55,28 @@ describe("Meilisearch environment configuration", () => {
       .flatMap((e) => Object.keys(e.constraints ?? {}));
     expect(hostErrors).toHaveLength(0);
   });
+
+  it("rejects a host without an HTTP protocol", async () => {
+    env.MEILISEARCH_HOST = "not-a-url";
+    const errors = await validate(env);
+    expect(errors.some((error) => error.property === "MEILISEARCH_HOST")).toBe(
+      true
+    );
+  });
+
+  it("rejects invalid index prefixes", async () => {
+    env.MEILISEARCH_INDEX_PREFIX = "outline invalid";
+    const errors = await validate(env);
+    expect(
+      errors.some((error) => error.property === "MEILISEARCH_INDEX_PREFIX")
+    ).toBe(true);
+  });
+
+  it("rejects non-positive timeouts", async () => {
+    env.MEILISEARCH_TIMEOUT_MS = 0;
+    const errors = await validate(env);
+    expect(
+      errors.some((error) => error.property === "MEILISEARCH_TIMEOUT_MS")
+    ).toBe(true);
+  });
 });

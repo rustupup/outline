@@ -17,15 +17,14 @@ describe("rebuild-meilisearch-index argument parsing", () => {
     expect(opts.noSwap).toBe(true);
   });
 
-  it("parses --team-id and --resume-from", () => {
+  it("parses --team-id with --no-swap", () => {
     const opts = MeilisearchIndexManager.parseRebuildArgs([
       "--team-id",
       "team-abc",
-      "--resume-from",
-      "doc-xyz",
+      "--no-swap",
     ]);
     expect(opts.teamId).toBe("team-abc");
-    expect(opts.resumeFrom).toBe("doc-xyz");
+    expect(opts.noSwap).toBe(true);
   });
 
   it("rejects unknown arguments", () => {

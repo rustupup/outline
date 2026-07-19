@@ -1,4 +1,3 @@
-import { map } from "es-toolkit/compat";
 import type { SearchResponse } from "meilisearch";
 import Document from "@server/models/Document";
 import type User from "@server/models/User";
@@ -11,6 +10,8 @@ import type { MeilisearchDocumentRecord } from "./types";
 export interface HydrateOptions {
   /** When false (e.g. no query), omit the context field from results. */
   withContext?: boolean;
+  /** When true, omit hits that have no reported text match position. */
+  requireActualMatch?: boolean;
 }
 
 /** A single Meilisearch hit with the fields the hydrator consumes. */
@@ -184,36 +185,37 @@ export class ResultHydrator {
     total: number
   ): ProviderSearchResponse {
     const withContext = options.withContext ?? true;
+    const requireActualMatch = options.requireActualMatch ?? false;
+    const documentsById = new Map(
+      documents.map((document) => [document.id, document])
+    );
+    const results: ProviderSearchResponse["results"] = [];
+    let omittedCount = 0;
+
+    for (const hit of hits) {
+      if (requireActualMatch && !hasActualMatch(hit)) {
+        omittedCount++;
+        continue;
+      }
+
+      const document = documentsById.get(hit.id);
+      if (!document) {
+        omittedCount++;
+        continue;
+      }
+
+      results.push({
+        ranking: rankingOf(hit),
+        context: withContext
+          ? sanitizeSnippet(hit._formatted?.text)
+          : undefined,
+        document,
+      });
+    }
 
     return {
-      results: map(hits, (hit) => {
-        // Skip hits with no actual match position. Meilisearch may return
-        // loosely related documents when the `words` ranking rule fills
-        // results; _matchesPosition reveals they have no real match.
-        if (!hasActualMatch(hit)) {
-          return null;
-        }
-        const document = documents.find((d) => d.id === hit.id);
-        if (!document) {
-          return null;
-        }
-        const result: {
-          ranking: number;
-          context?: string;
-          document: Document;
-        } = {
-          ranking: rankingOf(hit),
-          context: withContext
-            ? sanitizeSnippet(hit._formatted?.text)
-            : undefined,
-          document,
-        };
-        return result;
-      }).filter(
-        (r): r is { ranking: number; context?: string; document: Document } =>
-          r !== null
-      ),
-      total,
+      results,
+      total: Math.max(results.length, total - omittedCount),
     };
   }
 }

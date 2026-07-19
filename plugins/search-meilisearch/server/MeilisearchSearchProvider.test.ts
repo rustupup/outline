@@ -183,6 +183,19 @@ describe("MeilisearchSearchProvider", () => {
         collectionId: collection.id,
         title: "Share scope",
       });
+      const child = await buildDocument({
+        teamId: team.id,
+        userId: owner.id,
+        collectionId: collection.id,
+        parentDocumentId: document.id,
+        title: "Share child",
+      });
+      const unrelated = await buildDocument({
+        teamId: team.id,
+        userId: owner.id,
+        collectionId: collection.id,
+        title: "Unrelated document",
+      });
       const share = await buildShare({
         teamId: team.id,
         userId: owner.id,
@@ -213,6 +226,13 @@ describe("MeilisearchSearchProvider", () => {
 
       expect(result.results).toHaveLength(1);
       expect(result.results[0].document.id).toBe(document.id);
+      const [, params] = indexImpl.search.mock.calls[0] as unknown as [
+        string,
+        { filter: string },
+      ];
+      expect(params.filter).toContain(document.id);
+      expect(params.filter).toContain(child.id);
+      expect(params.filter).not.toContain(unrelated.id);
     });
   });
 

@@ -1,6 +1,7 @@
+import { StatusFilter } from "@shared/types";
+import { subtractDate } from "@shared/utils/date";
 import type Team from "@server/models/Team";
 import type { SearchOptions } from "@server/utils/BaseSearchProvider";
-import { StatusFilter } from "@shared/types";
 
 /**
  * User access context used to build the Meilisearch authorization filter.
@@ -72,6 +73,11 @@ function inClause(field: string, ids: string[]): string {
  */
 export class AccessFilterBuilder {
   /**
+   * @param now - clock used to calculate date filter thresholds.
+   */
+  public constructor(private readonly now: () => Date = () => new Date()) {}
+
+  /**
    * Build the filter for a user search.
    *
    * @param access - the user's access context.
@@ -116,22 +122,21 @@ export class AccessFilterBuilder {
       clauses.push(`collectionId = ${quote(options.collectionId)}`);
     }
 
-    if (options.documentIds && options.documentIds.length > 0) {
+    if (options.documentIds) {
       const docClause = inClause("id", options.documentIds);
-      if (docClause) {
-        clauses.push(docClause);
-      }
+      clauses.push(docClause || "id IS NULL");
     }
 
     if (options.collaboratorIds && options.collaboratorIds.length > 0) {
-      const collabClause = inClause("collaboratorIds", options.collaboratorIds);
-      if (collabClause) {
-        clauses.push(collabClause);
+      for (const collaboratorId of normalizeIds(options.collaboratorIds)) {
+        clauses.push(`collaboratorIds = ${quote(collaboratorId)}`);
       }
     }
 
     if (options.dateFilter) {
-      clauses.push(`updatedAt > ${options.dateFilter}`);
+      clauses.push(
+        `updatedAt > ${subtractDate(this.now(), options.dateFilter).getTime()}`
+      );
     }
 
     const statusClauses = this.buildStatusClauses(
@@ -167,15 +172,15 @@ export class AccessFilterBuilder {
       clauses.push(`collectionId = ${quote(options.collectionId)}`);
     }
 
-    if (options.documentIds && options.documentIds.length > 0) {
+    if (options.documentIds) {
       const docClause = inClause("id", options.documentIds);
-      if (docClause) {
-        clauses.push(docClause);
-      }
+      clauses.push(docClause || "id IS NULL");
     }
 
     if (options.dateFilter) {
-      clauses.push(`updatedAt > ${options.dateFilter}`);
+      clauses.push(
+        `updatedAt > ${subtractDate(this.now(), options.dateFilter).getTime()}`
+      );
     }
 
     return clauses.join(" AND ");

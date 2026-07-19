@@ -21,6 +21,7 @@ import SearchProviderManager from "@server/utils/SearchProviderManager";
  */
 export default class SearchIndexProcessor extends BaseProcessor {
   static applicableEvents: Event["name"][] = [
+    "documents.create",
     "documents.publish",
     "documents.update.delayed",
     "documents.archive",
@@ -34,6 +35,8 @@ export default class SearchIndexProcessor extends BaseProcessor {
     "documents.remove_group",
     "collections.create",
     "collections.update",
+    "collections.archive",
+    "collections.restore",
     "collections.delete",
     "comments.create",
     "comments.update",
@@ -58,6 +61,7 @@ export default class SearchIndexProcessor extends BaseProcessor {
     }
 
     switch (event.name) {
+      case "documents.create":
       case "documents.publish":
       case "documents.update.delayed":
       case "documents.unarchive": {
@@ -127,6 +131,16 @@ export default class SearchIndexProcessor extends BaseProcessor {
         if (collection) {
           await provider.index(SearchableModel.Collection, collection);
         }
+        break;
+      }
+
+      case "collections.archive":
+      case "collections.restore": {
+        await provider.updateMetadata(
+          SearchableModel.Collection,
+          (event as CollectionEvent).collectionId,
+          {}
+        );
         break;
       }
 
