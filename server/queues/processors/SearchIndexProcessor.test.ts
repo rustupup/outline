@@ -13,6 +13,7 @@ const processor = new SearchIndexProcessor();
 
 describe("SearchIndexProcessor", () => {
   it("should have the expected applicable events", () => {
+    expect(SearchIndexProcessor.applicableEvents).toContain("documents.create");
     expect(SearchIndexProcessor.applicableEvents).toContain(
       "documents.publish"
     );
@@ -33,6 +34,12 @@ describe("SearchIndexProcessor", () => {
     );
     expect(SearchIndexProcessor.applicableEvents).toContain(
       "documents.remove_group"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
+      "collections.archive"
+    );
+    expect(SearchIndexProcessor.applicableEvents).toContain(
+      "collections.restore"
     );
     expect(SearchIndexProcessor.applicableEvents).toContain(
       "collections.create"

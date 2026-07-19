@@ -1,9 +1,12 @@
 import invariant from "invariant";
+import { Op } from "sequelize";
 import { SearchableModel } from "@shared/types";
 import { SearchServiceUnavailableError } from "@server/errors";
+import Logger from "@server/logging/Logger";
 import Collection from "@server/models/Collection";
 import type Comment from "@server/models/Comment";
 import Document from "@server/models/Document";
+import type Share from "@server/models/Share";
 import type Team from "@server/models/Team";
 import type User from "@server/models/User";
 import type {
@@ -41,6 +44,7 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
   private readonly hydrator = new ResultHydrator();
   private readonly documentMapper = new DocumentMapper();
   private readonly collectionMapper = new CollectionMapper();
+  private client: MeilisearchClient | undefined;
 
   /**
    * @param client - optional Meilisearch client. When omitted, a client is
@@ -58,7 +62,12 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
    * first use. Throws if required configuration is missing.
    */
   private getClient(): MeilisearchClient {
-    return this.injectedClient ?? createMeilisearchClient();
+    if (this.injectedClient) {
+      return this.injectedClient;
+    }
+
+    this.client ??= createMeilisearchClient();
+    return this.client;
   }
 
   /**
@@ -89,19 +98,20 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
 
     const params = this.queryMapper.buildSearchParams({ options, filter });
 
-    const index = this.getClient().index<MeilisearchDocumentRecord>(
-      stableDocumentIndexName()
-    );
-
     let response;
     try {
+      const index = this.getClient().index<MeilisearchDocumentRecord>(
+        stableDocumentIndexName()
+      );
       response = await index.search(options.query ?? "", params);
     } catch (err) {
-      throw this.toSearchError(err);
+      throw this.toSearchError(err, "searchForUser", stableDocumentIndexName());
     }
 
+    const hasQuery = Boolean(options.query?.trim());
     return this.hydrator.hydrateForUser(user, response, {
-      withContext: Boolean(options.query),
+      withContext: hasQuery,
+      requireActualMatch: hasQuery,
     });
   }
 
@@ -123,23 +133,33 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
       "MeilisearchSearchProvider.searchForTeam requires a share constraint"
     );
 
-    const filter = this.filterBuilder.buildForTeam(team, options);
+    const shareDocumentIds = await this.getShareDocumentIds(share);
+    const requestedDocumentIds = options.documentIds;
+    const documentIds = requestedDocumentIds
+      ? shareDocumentIds.filter((id) => requestedDocumentIds.includes(id))
+      : shareDocumentIds;
+    const scopedOptions = { ...options, documentIds };
+    const filter = this.filterBuilder.buildForTeam(team, scopedOptions);
 
-    const params = this.queryMapper.buildSearchParams({ options, filter });
-
-    const index = this.getClient().index<MeilisearchDocumentRecord>(
-      stableDocumentIndexName()
-    );
+    const params = this.queryMapper.buildSearchParams({
+      options: scopedOptions,
+      filter,
+    });
 
     let response;
     try {
+      const index = this.getClient().index<MeilisearchDocumentRecord>(
+        stableDocumentIndexName()
+      );
       response = await index.search(options.query ?? "", params);
     } catch (err) {
-      throw this.toSearchError(err);
+      throw this.toSearchError(err, "searchForTeam", stableDocumentIndexName());
     }
 
+    const hasQuery = Boolean(options.query?.trim());
     return this.hydrator.hydrateForTeam(team.id, response, {
-      withContext: Boolean(options.query),
+      withContext: hasQuery,
+      requireActualMatch: hasQuery,
     });
   }
 
@@ -177,19 +197,24 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
       titleOnly: true,
     });
 
-    const index = this.getClient().index<MeilisearchDocumentRecord>(
-      stableDocumentIndexName()
-    );
-
     let response;
     try {
+      const index = this.getClient().index<MeilisearchDocumentRecord>(
+        stableDocumentIndexName()
+      );
       response = await index.search(options.query ?? "", params);
     } catch (err) {
-      throw this.toSearchError(err);
+      throw this.toSearchError(
+        err,
+        "searchTitlesForUser",
+        stableDocumentIndexName()
+      );
     }
 
+    const hasQuery = Boolean(options.query?.trim());
     const hydrated = await this.hydrator.hydrateForUser(user, response, {
       withContext: false,
+      requireActualMatch: hasQuery,
     });
     return hydrated.results.map((r) => r.document);
   }
@@ -214,6 +239,7 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
     const filter = [
       `teamId = ${JSON.stringify(user.teamId)}`,
       `deletedAt IS NULL`,
+      `archivedAt IS NULL`,
       `id IN [${collectionIds.map((id) => JSON.stringify(id)).join(", ")}]`,
     ].join(" AND ");
 
@@ -221,16 +247,20 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
       options,
       filter,
     });
-
-    const index = this.getClient().index<MeilisearchCollectionRecord>(
-      stableCollectionIndexName()
-    );
+    params.sort = ["name:asc"];
 
     let response;
     try {
+      const index = this.getClient().index<MeilisearchCollectionRecord>(
+        stableCollectionIndexName()
+      );
       response = await index.search(options.query ?? "", params);
     } catch (err) {
-      throw this.toSearchError(err);
+      throw this.toSearchError(
+        err,
+        "searchCollectionsForUser",
+        stableCollectionIndexName()
+      );
     }
 
     const ids = response.hits.map((h) => h.id);
@@ -355,22 +385,53 @@ export class MeilisearchSearchProvider extends BaseSearchProvider {
   }
 
   /**
+   * Resolve the exact document ids covered by a public share.
+   *
+   * @param share - the share that authorizes the team search.
+   * @returns document ids contained in the shared collection or document tree.
+   */
+  private async getShareDocumentIds(share: Share): Promise<string[]> {
+    if (share.collectionId) {
+      const collection =
+        share.collection ??
+        (await share.$get("collection", { scope: "unscoped" }));
+      invariant(collection, "Cannot find collection for share");
+      return collection.getAllDocumentIds();
+    }
+
+    invariant(
+      share.documentId,
+      "Share must reference a collection or document"
+    );
+    const document = share.document ?? (await share.$get("document"));
+    invariant(document, "Cannot find document for share");
+
+    if (!share.includeChildDocuments) {
+      return [document.id];
+    }
+
+    const childDocumentIds = await document.findAllChildDocumentIds({
+      archivedAt: { [Op.is]: null },
+    });
+    return [document.id, ...childDocumentIds];
+  }
+
+  /**
    * Convert an SDK failure into a stable 503 error. The original error is
    * logged with operation and index context but never exposed to the API,
    * since SDK messages may contain host or query details.
    *
    * @param err - the thrown SDK error.
+   * @param operation - the provider operation that failed.
+   * @param index - the index used by the failed operation.
    * @returns a {@link SearchServiceUnavailableError}.
    */
-  private toSearchError(err: unknown): Error {
-    const message =
-      err instanceof Error ? err.message : "unknown search failure";
-    // Log internally with safe context; never include the message in the
-    // API response.
-    // eslint-disable-next-line no-console
-    console.error("meilisearch search failure", {
-      index: stableDocumentIndexName(),
-      error: message,
+  private toSearchError(err: unknown, operation: string, index: string): Error {
+    const safeError = new Error("Meilisearch request failed");
+    safeError.name = err instanceof Error ? err.name : "UnknownError";
+    Logger.error("Meilisearch search failure", safeError, {
+      operation,
+      index,
     });
     return SearchServiceUnavailableError();
   }

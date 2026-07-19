@@ -13,6 +13,8 @@ import {
   IsNumber,
   IsIn,
   IsBoolean,
+  IsInt,
+  Matches,
   Min,
 } from "class-validator";
 import { uniq } from "es-toolkit/compat";
@@ -874,7 +876,11 @@ export class Environment {
    * set to "meilisearch"; validated at client construction time.
    */
   @IsOptional()
-  @IsUrl({ protocols: ["http", "https"], require_tld: false })
+  @IsUrl({
+    protocols: ["http", "https"],
+    require_protocol: true,
+    require_tld: false,
+  })
   public MEILISEARCH_HOST = this.toOptionalString(environment.MEILISEARCH_HOST);
 
   /**
@@ -891,6 +897,8 @@ export class Environment {
    * Outline instances share a single Meilisearch server.
    */
   @IsOptional()
+  @Length(1, 200)
+  @Matches(/^[A-Za-z0-9_-]+$/)
   public MEILISEARCH_INDEX_PREFIX =
     this.toOptionalString(environment.MEILISEARCH_INDEX_PREFIX) ?? "outline";
 
@@ -898,7 +906,8 @@ export class Environment {
    * Timeout in milliseconds for Meilisearch SDK requests.
    */
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1)
   public MEILISEARCH_TIMEOUT_MS =
     this.toOptionalNumber(environment.MEILISEARCH_TIMEOUT_MS) ?? 5000;
 
