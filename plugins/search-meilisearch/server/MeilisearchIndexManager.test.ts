@@ -160,6 +160,18 @@ describe("MeilisearchIndexManager", () => {
         manager.verifyDocumentCount("ts", 100)
       ).resolves.toBeUndefined();
     });
+
+    it("verifies collection counts", async () => {
+      const getStats = vi.fn().mockResolvedValue({ numberOfDocuments: 25 });
+      const client = fakeClient({
+        outline_collections_v1_ts: { getStats },
+      });
+      const manager = new MeilisearchIndexManager(client);
+
+      await expect(
+        manager.verifyCollectionCount("ts", 25)
+      ).resolves.toBeUndefined();
+    });
   });
 
   describe("parseRebuildArgs", () => {
@@ -204,6 +216,22 @@ describe("MeilisearchIndexManager", () => {
       expect(() =>
         MeilisearchIndexManager.parseRebuildArgs(["--unknown-flag"])
       ).toThrow();
+    });
+
+    it("requires --no-swap for a team-scoped rebuild", () => {
+      expect(() =>
+        MeilisearchIndexManager.parseRebuildArgs(["--team-id", "abc"])
+      ).toThrow(/--no-swap/);
+    });
+
+    it("rejects the unsafe resume flag", () => {
+      expect(() =>
+        MeilisearchIndexManager.parseRebuildArgs([
+          "--resume-from",
+          "document-id",
+          "--no-swap",
+        ])
+      ).toThrow(/resume/i);
     });
   });
 });

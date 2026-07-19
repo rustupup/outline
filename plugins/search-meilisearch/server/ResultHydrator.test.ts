@@ -309,12 +309,46 @@ describe("ResultHydrator", () => {
       const hydrator = new ResultHydrator();
       const result = await hydrator.hydrateForUser(
         user,
-        fakeSearchResponse(hits)
+        fakeSearchResponse(hits),
+        { requireActualMatch: true }
       );
 
       // unmatched should be omitted because it has no actual match.
       expect(result.results).toHaveLength(1);
       expect(result.results[0].document.id).toBe(matched.id);
+      expect(result.total).toBe(1);
+    });
+
+    it("keeps hits with empty match positions when the query is empty", async () => {
+      const team = await buildTeam();
+      const user = await buildUser({ teamId: team.id });
+      const collection = await buildCollection({
+        teamId: team.id,
+        userId: user.id,
+      });
+      const document = await buildDocument({
+        teamId: team.id,
+        userId: user.id,
+        collectionId: collection.id,
+        title: "Filtered browse result",
+      });
+
+      const hydrator = new ResultHydrator();
+      const result = await hydrator.hydrateForUser(
+        user,
+        fakeSearchResponse([
+          {
+            id: document.id,
+            _formatted: { text: "" },
+            _rankingScore: 0,
+            _matchesPosition: {},
+          },
+        ]),
+        { requireActualMatch: false, withContext: false }
+      );
+
+      expect(result.results).toHaveLength(1);
+      expect(result.total).toBe(1);
     });
 
     it("reports total from estimatedTotalHits", async () => {

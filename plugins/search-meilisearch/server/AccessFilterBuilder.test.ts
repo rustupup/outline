@@ -68,23 +68,23 @@ describe("AccessFilterBuilder", () => {
       expect(filter).toMatch(/id IN \["d1", "d2"\]/);
     });
 
-    it("maps collaboratorIds to a non-empty IN clause", () => {
+    it("requires every collaborator id", () => {
       const filter = builder.buildForUser(ctx(), {
         collaboratorIds: ["c1", "c2"],
       });
-      expect(filter).toMatch(/collaboratorIds IN \["c1", "c2"\]/);
+      expect(filter).toContain('collaboratorIds = "c1"');
+      expect(filter).toContain('collaboratorIds = "c2"');
     });
 
-    it("maps a date filter to updatedAt > now - duration", () => {
+    it("maps a date filter to an epoch millisecond threshold", () => {
       const now = new Date("2026-07-18T00:00:00Z");
-      const filter = builder.buildForUser(ctx(), {
+      const deterministicBuilder = new AccessFilterBuilder(() => now);
+      const filter = deterministicBuilder.buildForUser(ctx(), {
         dateFilter: "day" as DateFilter,
       });
-      // The filter uses Meilisearch's relative timestamp syntax. We assert the
-      // duration appears; the builder injects a clock so tests are deterministic.
-      expect(filter).toMatch(/updatedAt/);
-      expect(filter).toMatch(/day/);
-      void now;
+      expect(filter).toContain(
+        `updatedAt > ${now.getTime() - 24 * 60 * 60 * 1000}`
+      );
     });
 
     it("maps a published status filter to publishedAt IS NOT NULL AND archivedAt IS NULL", () => {

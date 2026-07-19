@@ -148,6 +148,46 @@ export class MeilisearchIndexManager {
   }
 
   /**
+   * Remove documents that were soft-deleted during a rebuild.
+   *
+   * @param timestamp - build identifier.
+   * @param ids - document ids to remove.
+   */
+  public async batchDeleteDocuments(
+    timestamp: string,
+    ids: string[]
+  ): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    const index = this.client.index<MeilisearchDocumentRecord>(
+      versionedDocumentIndexName(timestamp)
+    );
+    const enqueued = await index.deleteDocuments(ids);
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 60000 });
+  }
+
+  /**
+   * Remove collections that were soft-deleted during a rebuild.
+   *
+   * @param timestamp - build identifier.
+   * @param ids - collection ids to remove.
+   */
+  public async batchDeleteCollections(
+    timestamp: string,
+    ids: string[]
+  ): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    const index = this.client.index<MeilisearchCollectionRecord>(
+      versionedCollectionIndexName(timestamp)
+    );
+    const enqueued = await index.deleteDocuments(ids);
+    await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 60000 });
+  }
+
+  /**
    * Verify the versioned document index has the expected number of documents.
    * Refuses to swap when counts differ.
    *
@@ -170,6 +210,27 @@ export class MeilisearchIndexManager {
   }
 
   /**
+   * Verify the versioned collection index has the expected number of records.
+   *
+   * @param timestamp - build identifier.
+   * @param expected - expected collection count.
+   */
+  public async verifyCollectionCount(
+    timestamp: string,
+    expected: number
+  ): Promise<void> {
+    const index = this.client.index<MeilisearchCollectionRecord>(
+      versionedCollectionIndexName(timestamp)
+    );
+    const stats = await index.getStats();
+    if (stats.numberOfDocuments !== expected) {
+      throw new Error(
+        `Collection count mismatch: expected ${expected}, got ${stats.numberOfDocuments}`
+      );
+    }
+  }
+
+  /**
    * Ensure the stable index exists before swapping. Meilisearch v1.49's
    * swapIndexes rejects if either index uid is missing, so on first
    * installation we must create an empty stable index first. If the stable
@@ -184,10 +245,16 @@ export class MeilisearchIndexManager {
         primaryKey: "id",
       });
       await this.waitForTaskSuccess(enqueued.taskUid, { timeout: 30000 });
-    } catch {
+    } catch (err) {
       // Index already exists (createIndex returns a failed task with
       // "index_already_exists" error). Safe to ignore — we only need it
       // to exist before swap.
+      if (
+        !(err instanceof Error) ||
+        !err.message.includes("index_already_exists")
+      ) {
+        throw err;
+      }
     }
   }
 
@@ -266,10 +333,17 @@ export class MeilisearchIndexManager {
           break;
         case "--team-id":
           opts.teamId = argv[++i];
+          if (!opts.teamId) {
+            throw new Error("--team-id requires a value");
+          }
           break;
         case "--batch-size": {
           const n = Number(argv[++i]);
-          if (!Number.isFinite(n) || n < MIN_BATCH_SIZE || n > MAX_BATCH_SIZE) {
+          if (
+            !Number.isInteger(n) ||
+            n < MIN_BATCH_SIZE ||
+            n > MAX_BATCH_SIZE
+          ) {
             throw new Error(
               `--batch-size must be between ${MIN_BATCH_SIZE} and ${MAX_BATCH_SIZE}`
             );
@@ -285,6 +359,9 @@ export class MeilisearchIndexManager {
           break;
         case "--resume-from":
           opts.resumeFrom = argv[++i];
+          if (!opts.resumeFrom) {
+            throw new Error("--resume-from requires a value");
+          }
           break;
         case "--allow-provider-mismatch":
           opts.allowProviderMismatch = true;
@@ -292,6 +369,16 @@ export class MeilisearchIndexManager {
         default:
           throw new Error(`Unknown argument: ${arg}`);
       }
+    }
+
+    if (opts.resumeFrom) {
+      throw new Error(
+        "--resume-from is disabled because rebuilds create a new versioned index and cannot safely resume without a persistent build id"
+      );
+    }
+
+    if (opts.teamId && !opts.noSwap && !opts.dryRun) {
+      throw new Error("--team-id requires --no-swap to protect other teams");
     }
 
     return opts;

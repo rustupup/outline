@@ -1,6 +1,8 @@
-import { afterAll, beforeAll } from "vitest";
+import { afterAll, beforeAll, beforeEach } from "vitest";
 import { Meilisearch } from "meilisearch";
+import { http, passthrough } from "msw";
 import env from "@server/env";
+import { server } from "@server/test/msw";
 
 // Integration test against a real Meilisearch server. Skipped unless
 // MEILISEARCH_HOST and MEILISEARCH_API_KEY are configured, so the unit test
@@ -16,6 +18,7 @@ describe.skipIf(!hasServer)("Meilisearch Chinese search integration", () => {
   let documentIndexUid: string;
 
   beforeAll(async () => {
+    server.use(http.all(`${host}/*`, () => passthrough()));
     client = new Meilisearch({
       host: host!,
       apiKey: apiKey!,
@@ -38,9 +41,14 @@ describe.skipIf(!hasServer)("Meilisearch Chinese search integration", () => {
     });
   });
 
+  beforeEach(() => {
+    server.use(http.all(`${host}/*`, () => passthrough()));
+  });
+
   afterAll(async () => {
     if (documentIndexUid) {
       try {
+        server.use(http.all(`${host}/*`, () => passthrough()));
         await client.deleteIndex(documentIndexUid);
       } catch {
         // Best-effort cleanup.
