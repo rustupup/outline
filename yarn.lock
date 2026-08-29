@@ -14595,6 +14595,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"meilisearch@npm:0.59.0":
+  version: 0.59.0
+  resolution: "meilisearch@npm:0.59.0"
+  checksum: 10c0/180a7e2a0b434dbec2bb4ebacfd38f0a8fac4429b8b8c6ecc206e433ea3058f06f6d6fa4943c7f62ea0b986037b87e412f1a5e90ca30cf0592c80b4c66448450
+  languageName: node
+  linkType: hard
+
 "memoize-one@npm:>=3.1.1 <6":
   version: 5.2.1
   resolution: "memoize-one@npm:5.2.1"
@@ -15759,6 +15766,7 @@ __metadata:
     markdown-it: "npm:^14.3.0"
     markdown-it-container: "npm:^3.0.0"
     markdown-it-emoji: "npm:^3.0.0"
+    meilisearch: "npm:0.59.0"
     mermaid: "npm:11.17.1"
     mime-types: "npm:^3.0.2"
     mobx: "npm:^4.15.7"
